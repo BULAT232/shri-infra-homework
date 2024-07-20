@@ -3,22 +3,18 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
-      release_version:
-        description: 'Release version to deploy'
+      version:
+        description: 'Version to deploy'
         required: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check Docker image existence
-        run: |
-          if ! docker pull cr.yandex/fv442cnac4eemqh92vit/app:${{ github.event.inputs.release_version }}_latest; then
-            echo "Docker image not found!"
-            exit 1
-          fi
       - name: Deploy to VM
         run: |
-          ssh -o StrictHostKeyChecking=no -i /path/to/your/private/key user@your_vm_ip 'docker pull cr.yandex/fv442cnac4eemqh92vit/app:${{ github.event.inputs.release_version }}_latest && docker run -d -p 3000:3000 cr.yandex/fv442cnac4eemqh92vit/app:${{ github.event.inputs.release_version }}_latest'
-      - name: Create GitHub Issue Comment
-        run: gh issue comment ${{ env.issue_number }} --body "Deployed release ${{ github.event.inputs.release_version }}"
+          ssh -o StrictHostKeyChecking=no -i ${{ secrets.SSH_PRIVATE_KEY }} user@${{ secrets.VM_IP }} << 'EOF'
+            docker pull cr.yandex/${{ secrets.REGISTRY_ID }}/app:${{ github.event.inputs.version }}_latest
+            docker run -d -p 3000:3000 cr.yandex/${{ secrets.REGISTRY_ID }}/app:${{ github.event.inputs.version }}_latest
+EOF
