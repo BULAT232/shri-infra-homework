@@ -1,71 +1,72 @@
 # syntax=docker/dockerfile:1
 
-# Комментарии приведены по всему этому файлу, чтобы помочь вам начать.
-# Если вам нужно больше помощи, посетите справочное руководство по Dockerfile на
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Dockerfile reference guide at
 # https://docs.docker.com/go/dockerfile-reference/
 
-# Хотите помочь нам улучшить этот шаблон? Оставьте свой отзыв здесь: https://forms.gle/ybq9Krt8jtBL3iCk7
+# Want to help us make this template better? Share your feedback here: https://forms.gle/ybq9Krt8jtBL3iCk7
 
 ARG NODE_VERSION=18.18.1
 
 ################################################################################
-# Используйте образ node в качестве базового образа для всех этапов.
+# Use node image for base image for all stages.
 FROM node:${NODE_VERSION}-alpine as base
 
-# Устанавливаем рабочую директорию для всех этапов сборки.
+# Set working directory for all build stages.
 WORKDIR /usr/src/app
 
 
 ################################################################################
-# Создаем этап для установки production-зависимостей.
+# Create a stage for installing production dependecies.
 FROM base as deps
 
-# Скачиваем зависимости на отдельном шаге, чтобы использовать кэширование Docker.
-# Используем кэш монтирования в /root/.npm, чтобы ускорить последующие сборки.
-# Используем привязки к package.json и package-lock.json, чтобы избежать их копирования
-# на этот уровень.
+# Download dependencies as a separate step to take advantage of Docker's caching.
+# Leverage a cache mount to /root/.npm to speed up subsequent builds.
+# Leverage bind mounts to package.json and package-lock.json to avoid having to copy them
+# into this layer.
 RUN --mount=type=bind,source=package.json,target=package.json \
     --mount=type=bind,source=package-lock.json,target=package-lock.json \
     --mount=type=cache,target=/root/.npm \
     npm ci --omit=dev
 
 ################################################################################
-# Создаем этап для сборки приложения.
+# Create a stage for building the application.
 FROM deps as build
 
-# Скачиваем дополнительные зависимости для разработки перед сборкой, так как некоторые проекты требуют
-# установки "devDependencies" для сборки. Если это не нужно, удалите этот шаг.
+# Download additional development dependencies before building, as some projects require
+# "devDependencies" to be installed to build. If you don't need this, remove this step.
 RUN --mount=type=bind,source=package.json,target=package.json \
     --mount=type=bind,source=package-lock.json,target=package-lock.json \
     --mount=type=cache,target=/root/.npm \
     npm ci
 
-# Копируем остальные исходные файлы в образ.
+# Copy the rest of the source files into the image.
 COPY . .
-# Запускаем скрипт сборки.
+# Run the build script.
 RUN npm run build
 
 ################################################################################
-# Создаем новый этап для запуска приложения с минимальными зависимостями во время выполнения,
-# где необходимые файлы копируются из этапа сборки.
+# Create a new stage to run the application with minimal runtime dependencies
+# where the necessary files are copied from the build stage.
 FROM base as final
 
-# По умолчанию используем production-окружение node.
+# Use production node environment by default.
 ENV NODE_ENV production
 
-# Запускаем приложение от имени непривилегированного пользователя.
+# Run the application as a non-root user.
 USER node
 
-# Копируем package.json, чтобы можно было использовать команды менеджера пакетов.
+# Copy package.json so that package manager commands can be used.
 COPY package.json .
 
-# Копируем production-зависимости с этапа deps и
-# собранное приложение с этапа build в образ.
+# Copy the production dependencies from the deps stage and also
+# the built application from the build stage into the image.
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY --from=build /usr/src/app/. ./.
 
-# Открываем порт, на котором приложение будет прослушивать.
+
+# Expose the port that the application listens on.
 EXPOSE 3000
 
-# Запускаем приложение.
-CMD ["npm", "start"]
+# Run the application.
+CMD npm start
