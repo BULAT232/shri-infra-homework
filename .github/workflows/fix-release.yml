@@ -24,12 +24,17 @@ jobs:
       - name: Run tests
         run: npm test
       - name: Build Docker image
-        run: docker build -t cr.yandex/<registry_id>/app:${{ github.event.inputs.release_version }}_fix${{ github.run_number }} .
+        run: docker build -t cr.yandex/fv442cnac4eemqh92vit/app:${{ github.event.inputs.release_version }}_fix${{ github.run_number }} .
       - name: Push Docker image to Container Registry
         run: |
           echo ${{ secrets.YANDEX_CLOUD_SERVICE_ACCOUNT_KEY }} | docker login -u json_key --password-stdin https://cr.yandex
-          docker push cr.yandex/<registry_id>/app:${{ github.event.inputs.release_version }}_fix${{ github.run_number }}
-          docker tag cr.yandex/<registry_id>/app:${{ github.event.inputs.release_version }}_fix${{ github.run_number }} cr.yandex/<registry_id>/app:latest
-          docker push cr.yandex/<registry_id>/app:latest
+          docker push cr.yandex/fv442cnac4eemqh92vit/app:${{ github.event.inputs.release_version }}_fix${{ github.run_number }}
+          docker tag cr.yandex/fv442cnac4eemqh92vit/app:${{ github.event.inputs.release_version }}_fix${{ github.run_number }} cr.yandex/fv442cnac4eemqh92vit/app:latest
+          docker push cr.yandex/fv442cnac4eemqh92vit/app:latest
+      - name: Create GitHub Issue
+        id: create_issue
+        run: |
+          issue_number=$(gh issue create --title "Fix release notes for ${{ github.event.inputs.release_version }}" --body "Fix release notes for ${{ github.event.inputs.release_version }}" --json number -q ".number")
+          echo "issue_number=$issue_number" >> $GITHUB_ENV
       - name: Create GitHub Issue Comment
-        run: gh issue comment <issue_number> --body "Fix release notes for ${{ github.event.inputs.release_version }}"
+        run: gh issue comment ${{ env.issue_number }} --body "Fix release notes for ${{ github.event.inputs.release_version }}"
