@@ -1,0 +1,131 @@
+name: Release
+on: workflow_dispatch
+jobs:
+  run_checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node_version: [20]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.7
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.0.3
+        with:
+          node-version: '${{ matrix.node_version }}'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run lint
+        run: npm run lint
+      - name: Run tests
+        run: npm run test
+  branch_creation:
+    runs-on: ubuntu-latest
+    needs: [run_checks]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.7
+      - name: Create release branch
+        run: git checkout -b release/${{ github.run_number }}
+      - name: Push release branch
+        run: git push origin release/${{ github.run_number }}
+  build_and_push_docker:
+    runs-on: ubuntu-latest
+    needs: [branch_creation]
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
+        with:
+          ref: release/${{ github.run_number }}
+      - name: Login to Yandex Container Registry
+        run: |
+            docker login \
+              --username oauth \
+              --password ${{ secrets.YANDEX_OAUTH }} \
+              cr.yandex
+      - name: Build and push Docker image
+        run: |
+          docker build -t cr.yandex/${{ secrets.CR_ID }}/app:${{ github.run_number }} .
+          docker push cr.yandex/${{ secrets.CR_ID }}/app:${{ github.run_number }}
+      - name: Build and push latest Docker image
+        run: |
+          docker build -t cr.yandex/${{ secrets.CR_ID }}/app:${{ github.run_number }}_latest .
+          docker push cr.yandex/${{ secrets.CR_ID }}/app:${{ github.run_number }}_latest
+  tagging_release:
+    runs-on: ubuntu-latest
+    needs: [branch_creation]
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
+        with:
+          ref: release/${{ github.run_number }}
+      - name: Create and push tag
+        uses: EndBug/latest-tag@latest
+        with: 
+          ref: ${{ github.run_number }}
+  issue_creation:
+    runs-on: ubuntu-latest
+    needs: [run_checks]
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
+        with:
+          ref: release/${{ github.run_number }}
+      - name: Configure Git
+        run: |
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "${{ github.actor }}"
+      - name: Create label
+        run: |
+          gh label create "release ${{ github.run_number }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Create issue
+        run: |
+          touch $ISSUE
+          echo "**Release ${{ github.run_number }}**" >> $ISSUE
+          echo "- Date: $(date)" >> $ISSUE
+          echo "- Author: ${{ github.triggering_actor }}" >> $ISSUE
+          echo "- Version: ${{ github.run_number }}" >> $ISSUE
+          echo "- Commits: ${{ github.event.head_commit.message }}" >> $ISSUE
+          git log --pretty=oneline >> $ISSUE
+          echo "- YC Docker: cr.yandex/${{secrets.CR_ID}}/app:${{ github.run_number }}" >> $ISSUE
+          gh issue create --title "Release ${{ github.run_number }}" --body-file $ISSUE --label "release ${{ github.run_number }}"
+          rm $ISSUE
+        env:
+          ISSUE: issue.txt
+          GH_TOKEN: ${{ github.token }}
+  changelog_update:
+    runs-on: ubuntu-latest
+    needs: [branch_creation]
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
+        with:
+          ref: release/${{ github.run_number }}
+      - name: Configure Git
+        run: |
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "${{ github.actor }}"
+      - name: Update changelog
+        run: |
+          touch $TEMP
+          cat $CHANGELOG > $TEMP
+          touch $CHANGELOG
+          echo "## ${{ github.run_number }}" >> $CHANGELOG
+          git log --pretty=oneline >> $CHANGELOG
+          cat $TEMP >> $CHANGELOG
+          rm $TEMP
+          cat $CHANGELOG
+          git add CHANGELOG.md
+          git commit -m "update changelog for ${{ github.run_number }}"
+          git push origin release/${{ github.run_number }}
+        env:
+          CHANGELOG: CHANGELOG.md
+          TEMP: CHANGELOG_TEMP.md
+  
+      
+    
+      
+  
+          

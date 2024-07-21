@@ -1,53 +1,93 @@
-name: Release
+name: Release fix
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: "Version to release"
 
 jobs:
-  release:
+  run_checks:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        node_version: [20]
     steps:
-      - uses: actions/checkout@v2
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
+      - name: Checkout
+        uses: actions/checkout@v4.1.7
+      - name: Setup Node.js
+        uses: actions/setup-node@v4.0.3
         with:
-          node-version: '18'
-
+          node-version: '${{ matrix.node_version }}'
       - name: Install dependencies
         run: npm ci
-
-      - name: Lint code
+      - name: Run lint
         run: npm run lint
-
       - name: Run tests
         run: npm run test
-
-      - name: Build Docker image
-        run: npm run build:docker
-
-      - name: Tag Docker image
-        run: |
-          IMAGE_TAG="cr.yandex/${{ secrets.REGISTRY_ID }}/app:${{ github.run_number }}"
-          docker tag shri-infra $IMAGE_TAG
-          docker tag shri-infra $IMAGE_TAG_latest
-          echo $IMAGE_TAG >> $GITHUB_ENV
-
-      - name: Push Docker image
-        run: |
-          echo "${{ secrets.YC_DOCKER_PASSWORD }}" | docker login --username "oauth" --password-stdin cr.yandex
-          docker push ${{ env.IMAGE_TAG }}
-          docker push ${{ env.IMAGE_TAG }}_latest
-
-      - name: Create release branch
-        run: git checkout -b releases/${{ github.run_number }} && git push origin releases/${{ github.run_number }}
-
-      - name: Create tag
-        run: git tag ${{ github.run_number }} && git push origin ${{ github.run_number }}
-
-      - name: Create release issue
-        uses: peter-evans/create-issue-from-file@v3
+  build_and_push_fix_docker:
+    needs: [run_checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
         with:
-          title: Release ${{ github.run_number }}
-          content-filepath: release_notes.md
+          ref: release/${{ inputs.version }}
+      - name: Login to Yandex Container Registry
+        run: |
+            docker login \
+              --username oauth \
+              --password ${{ secrets.YANDEX_OAUTH }} \
+              cr.yandex
+      - name: Build and Push Docker image fix
+        run: |
+          docker build -t cr.yandex/${{ secrets.CR_ID }}/app:${{ inputs.version }}_fix${{ github.run_number }} .
+          docker push cr.yandex/${{ secrets.CR_ID }}/app:${{ inputs.version }}_fix${{ github.run_number }}
+
+      - name: Build and Push Docker image Latest
+        run: |
+          docker build -t cr.yandex/${{ secrets.CR_ID }}/app:${{ inputs.version }}_latest .
+          docker push cr.yandex/${{ secrets.CR_ID }}/app:${{ inputs.version }}_latest
+  tagging_release_fix:
+    needs: [run_checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
+        with:
+          ref: release/${{ inputs.version }}
+      - name: Create and Push Tag
+        uses: EndBug/latest-tag@latest
+        with:
+          ref: ${{ inputs.version }}_fix${{ github.run_number }}
+
+  issue_comment_addition:
+    runs-on: ubuntu-latest
+    needs: [run_checks]
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4.1.7
+        with:
+          ref: release/${{ inputs.version }}
+      - name: Configure Git
+        run: |
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "${{ github.actor }}"
+      - name: Create issue comment
+        run: |
+          touch $ISSUE
+          echo "**Release ${{ inputs.version }} fix**" >> $ISSUE
+          echo "- Date: $(date)" >> $ISSUE
+          echo "- Author: ${{ github.triggering_actor }}" >> $ISSUE
+          echo "- Version: ${{ github.run_number }}" >> $ISSUE
+          echo "- Commits: ${{ github.event.head_commit.message }}" >> $ISSUE
+          git log --pretty=oneline >> $ISSUE
+          echo "- YC Docker: cr.yandex/${{secrets.CR_ID}}/app:${{ inputs.version }}_fix${{ github.run_number }}" >> $ISSUE
+          number=$(gh issue list --label "release ${{ github.event.inputs.version }}" --json number --jq '.[0].number')
+          gh issue comment "$number" --body-file "$ISSUE"
+          rm $ISSUE
+        env:
+          ISSUE: issue.txt
+          GH_TOKEN: ${{ github.token }}
